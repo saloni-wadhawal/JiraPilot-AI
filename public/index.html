@@ -1,0 +1,188 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jira AI Automation Agent</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif;
+      background: #f3f5fb; color: #20263a;
+    }
+    header {
+      background: #172554; color: white;
+      padding: 22px 7%;
+    }
+    header h1 { margin: 0 0 8px; font-size: 25px; }
+    header p { margin: 0; color: #c7d2fe; }
+    main { max-width: 1050px; margin: 30px auto; padding: 0 20px; }
+    .card {
+      background: white; padding: 24px; border-radius: 12px;
+      margin-bottom: 20px; box-shadow: 0 3px 15px #1824470d;
+    }
+    h2 { margin-top: 0; font-size: 19px; }
+    label { display: block; margin: 16px 0 8px; font-weight: bold; }
+    input, textarea {
+      width: 100%; padding: 12px; border: 1px solid #ccd2df;
+      border-radius: 7px; font: inherit;
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    button {
+      margin-top: 16px; padding: 12px 18px; border: 0;
+      border-radius: 7px; background: #4f46e5;
+      color: white; font-weight: bold; cursor: pointer;
+    }
+    button:disabled { opacity: .6; cursor: wait; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+    .stat { background: #eef2ff; padding: 18px; border-radius: 9px; }
+    .stat strong { display: block; font-size: 24px; margin-top: 10px; }
+    .muted { color: #667085; font-size: 14px; }
+    .item { border-bottom: 1px solid #e5e7eb; padding: 12px 0; }
+    .status { color: #b45309; font-weight: bold; }
+    pre { background: #111827; color: #e5e7eb; padding: 16px;
+      border-radius: 8px; overflow: auto; white-space: pre-wrap; }
+    @media (max-width: 650px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AI-Powered Jira-to-PR Automation Agent</h1>
+    <p>Turn Jira requirements into Playwright tests and review-ready code.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Requirement Input</h2>
+      <p class="muted">Enter your Jira issue key to begin the automation workflow.</p>
+      <label for="issue">Jira Issue Key</label>
+      <input id="issue" value="APJTPAA-1" placeholder="Example: APJTPAA-1">
+      <label for="requirement">Requirement</label>
+      <textarea id="requirement">Automate EventHub ticket booking. Verify that booking one ticket decreases the available seat count by exactly one.</textarea>
+      <button id="analyze" onclick="analyzeRequirement()">Analyze Requirement</button>
+      <button id="runTests" onclick="runPlaywrightTests()">Run Playwright Tests</button>
+      <pre id="testOutput">No test run yet.</pre>
+      <p id="message" class="muted">Ready to start.</p>
+    </section>
+
+    <section class="card">
+      <h2>Automation Overview</h2>
+      <div class="grid">
+        <div class="stat">Test scenarios<strong id="scenarioCount">0</strong></div>
+        <div class="stat">Tests passed<strong id="passed">—</strong></div>
+        <div class="stat">Tests failed<strong id="failed">—</strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Generated Test Scenarios</h2>
+      <div id="scenarios" class="muted">No scenarios generated yet.</div>
+    </section>
+
+    <section class="card">
+      <h2>GitHub Pull Request</h2>
+      <p id="prStatus" class="status">Not created</p>
+      <p class="muted">After test generation and validation, the agent will prepare a feature branch and PR for human review.</p>
+    </section>
+  </main>
+
+  <script>
+    async function analyzeRequirement() {
+      const issue = document.getElementById("issue").value.trim();
+      const requirement = document.getElementById("requirement").value.trim();
+      const button = document.getElementById("analyze");
+      const message = document.getElementById("message");
+
+      if (!issue || !requirement) {
+        message.textContent = "Please enter both the issue key and requirement.";
+        return;
+      }
+
+      button.disabled = true;
+      message.textContent = "Analyzing requirement...";
+      document.getElementById("scenarios").textContent = "Working...";
+      document.getElementById("scenarioCount").textContent = "0";
+
+      try {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ issue, requirement })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Request failed");
+
+        document.getElementById("scenarioCount").textContent =
+          data.scenarios.length;
+
+        
+    document.getElementById("scenarios").innerHTML =
+    data.scenarios.map((s, i) =>
+    `<div class="item"><strong>${i + 1}. ${escapeHtml(typeof s === "string" ? s : s.title)}</strong>
+     <p>${escapeHtml(typeof s === "string" ? "" : (s.expected || ""))}</p></div>`
+    ).join("");
+ 
+
+        message.textContent = "Analysis completed. Mode: " + data.mode;
+      } catch (error) {
+        message.textContent = "Error: " + error.message;
+        document.getElementById("scenarios").textContent =
+          "Analysis could not be completed.";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function escapeHtml(value) {
+      const div = document.createElement("div");
+      div.textContent = value;
+      return div.innerHTML;
+    }
+
+
+    
+async function runPlaywrightTests() {
+  const button = document.getElementById('runTests');
+  const output = document.getElementById('testOutput');
+  const passed = document.getElementById('passed');
+  const failed = document.getElementById('failed');
+
+  button.disabled = true;
+  button.textContent = 'Running tests...';
+  output.textContent = 'Playwright is running your EventHub test...';
+
+  try {
+    const response = await fetch('/api/run-tests', {
+      method: 'POST'
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Could not run tests.');
+    }
+
+    passed.textContent = data.passed;
+    failed.textContent = data.failed;
+    output.textContent = data.output || 'No test output returned.';
+
+    document.getElementById('message').textContent =
+      data.success
+        ? 'Playwright execution completed successfully.'
+        : 'Playwright execution failed. Check the output below.';
+  } catch (error) {
+    output.textContent = error.message;
+    document.getElementById('message').textContent =
+      'Could not complete the test run.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Run Playwright Tests';
+  }
+}
+
+  </script>
+</body>
+</html>
