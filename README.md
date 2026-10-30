@@ -1,5 +1,5 @@
 # JiraPilot AI – AI-Powered Jira-to-Playwright Automation Agent
-**Transform Jira requirements into automated Playwright tests using AI.**
+Transform Jira requirements into automated Playwright tests using AI.
 
 
 ## Overview
@@ -36,6 +36,31 @@ The goal is to reduce manual effort in test-case creation, test execution, failu
 | Frontend | HTML, CSS, JavaScript |
 | Reporting | JSON |
 | Testing Environment | Local Mock EventHub Application |
+
+
+## MCP Server Integration
+
+JiraPilot AI uses Model Context Protocol (MCP) integrations in its AI-assisted development and agent environment to connect AI agents with external tools and services.
+
+MCP provides a standardized way for AI agents to access external capabilities through dedicated MCP servers.
+
+### MCP Servers Used
+
+| MCP Server | Purpose |
+|---|---|
+| Atlassian MCP Server | Connects agents with Jira to retrieve issue details and requirements. |
+| GitHub MCP Server | Provides access to GitHub repository and pull-request workflows. |
+| Playwright MCP Server | Provides browser interaction and automation tools for testing workflows. |
+
+### How MCP Supports the Workflow
+
+- **Atlassian MCP:** Helps agents access Jira issue information and acceptance criteria.
+- **GitHub MCP:** Supports repository-related operations and pull-request workflows.
+- **Playwright MCP:** Provides browser automation capabilities to interact with web applications.
+
+These MCP integrations extend the capabilities of the AI-assisted agent environment by connecting it with external development and testing tools.
+
+**Note:** MCP server integrations are part of the agent/tooling environment. The submitted application's local test execution is handled by its Node.js Playwright runner; the application backend should not be described as hosting these MCP servers.
 
 ## Project Workflow
 
