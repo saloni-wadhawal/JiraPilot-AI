@@ -1,6 +1,8 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+const readline = require('node:readline/promises');
 const { GoogleGenAI } = require('@google/genai');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -19,6 +21,28 @@ const ERROR_CATEGORIES = new Set([
   'application_behavior',
   'timeout',
   'unknown'
+]);
+const TEST_STATUSES = new Set([
+  'passed',
+  'failed',
+  'skipped',
+  'timedOut',
+  'interrupted',
+  'not-run'
+]);
+const EXECUTION_STATUSES = new Set([
+  'passed',
+  'failed',
+  'timedout',
+  'interrupted'
+]);
+const SAFE_GEMINI_ERROR_NAMES = new Set([
+  'AbortError',
+  'ApiError',
+  'GoogleGenAIError',
+  'SyntaxError',
+  'TimeoutError',
+  'TypeError'
 ]);
 
 function getRunId(resultsPath) {
@@ -60,32 +84,139 @@ function sanitizeText(value) {
 function atomicWriteJson(filePath, value, { exclusive = false } = {}) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
-  if (exclusive && fs.existsSync(filePath)) {
-    throw new Error(`Refusing to overwrite existing workflow artifact: ${path.basename(filePath)}`);
+  const contents = `${JSON.stringify(value, null, 2)}\n`;
+  if (exclusive) {
+    let descriptor;
+    try {
+      descriptor = fs.openSync(filePath, 'wx');
+    } catch (error) {
+      if (error.code === 'EEXIST') {
+        throw new Error(`Refusing to overwrite existing workflow artifact: ${path.basename(filePath)}`);
+      }
+      throw error;
+    }
+
+    try {
+      fs.writeFileSync(descriptor, contents, 'utf8');
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    return;
   }
 
-  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryPath, contents, {
     encoding: 'utf8',
     flag: 'wx'
   });
-  fs.renameSync(temporaryPath, filePath);
+  try {
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    fs.unlinkSync(temporaryPath);
+    throw error;
+  }
 }
 
 function validateResults(results, runId) {
+  const statusCounts = {
+    passed: 0,
+    failed: 0,
+    skipped: 0
+  };
+  const validTests = Array.isArray(results?.tests) && results.tests.every(test => {
+    if (
+      !test ||
+      typeof test.name !== 'string' ||
+      !TEST_STATUSES.has(test.status) ||
+      !Number.isInteger(test.durationMs) ||
+      test.durationMs < 0 ||
+      !Array.isArray(test.failureMessages) ||
+      !test.failureMessages.every(message => typeof message === 'string')
+    ) {
+      return false;
+    }
+
+    if (test.status === 'passed') statusCounts.passed += 1;
+    else if (test.status === 'skipped') statusCounts.skipped += 1;
+    else statusCounts.failed += 1;
+    return true;
+  });
+
   if (
     !results ||
+    results.schemaVersion !== 1 ||
     results.issueKey !== 'APJTPAA-1' ||
     results.testFile !== 'tests/generated/APJTPAA-1.spec.js' ||
     !/^[a-f0-9]{64}$/.test(results.sourceSha256 || '') ||
-    !Array.isArray(results.tests) ||
+    !EXECUTION_STATUSES.has(results.execution?.status) ||
+    !['local_mock', 'live_eventhub', 'unspecified'].includes(results.execution?.environment) ||
+    !Number.isInteger(results.execution?.durationMs) ||
+    results.execution.durationMs < 0 ||
+    typeof results.execution?.startedAt !== 'string' ||
+    typeof results.execution?.finishedAt !== 'string' ||
+    !Number.isFinite(Date.parse(results.execution.startedAt)) ||
+    !Number.isFinite(Date.parse(results.execution.finishedAt)) ||
+    (
+      results.execution.controlledFailureEnabled !== undefined &&
+      typeof results.execution.controlledFailureEnabled !== 'boolean'
+    ) ||
+    !validTests ||
     !results.summary ||
-    !Array.isArray(results.failureMessages)
+    !Number.isInteger(results.summary.total) ||
+    !Number.isInteger(results.summary.passed) ||
+    !Number.isInteger(results.summary.failed) ||
+    !Number.isInteger(results.summary.skipped) ||
+    results.summary.total !== results.tests.length ||
+    results.summary.passed !== statusCounts.passed ||
+    results.summary.failed !== statusCounts.failed ||
+    results.summary.skipped !== statusCounts.skipped ||
+    !Array.isArray(results.failureMessages) ||
+    !results.failureMessages.every(message => typeof message === 'string')
   ) {
     throw new Error(`The run result ${runId} does not match the APJTPAA-1 result schema.`);
   }
 
   return results;
+}
+
+function requireFailedRun(results) {
+  if (
+    results.execution.status !== 'failed' ||
+    !results.tests.some(test => test.status === 'failed')
+  ) {
+    throw new Error('Failure analysis and repair proposals require a failed execution with failed tests.');
+  }
+}
+
+function validateAnalysis(analysis, runId) {
+  if (
+    !analysis ||
+    analysis.schemaVersion !== 1 ||
+    analysis.runId !== runId ||
+    analysis.issueKey !== 'APJTPAA-1' ||
+    !Array.isArray(analysis.failures) ||
+    !analysis.repair ||
+    typeof analysis.repair.proposalStatus !== 'string'
+  ) {
+    throw new Error(`The analysis artifact for ${runId} is invalid or does not match this run.`);
+  }
+
+  return analysis;
+}
+
+function safeGeminiErrorName(error) {
+  const name = error && typeof error.name === 'string'
+    ? error.name
+    : 'Error';
+  return SAFE_GEMINI_ERROR_NAMES.has(name)
+    ? name
+    : 'Error';
+}
+
+function safeGeminiErrorReason(error) {
+  const safeName = safeGeminiErrorName(error);
+  return `Gemini analysis failed (${safeName}); deterministic analysis was used. Error details were omitted to avoid exposing sensitive data.`;
 }
 
 function fallbackAnalysis(test, failureMessage) {
@@ -163,12 +294,14 @@ function validateGeminiAnalysis(value, testName, originalFailure) {
 }
 
 function createGeminiClient() {
+  // When enabled, sanitized test failure details may be sent to Gemini. The disable flag keeps analysis local.
   if (process.env.JIRAPILOT_DISABLE_GEMINI_ANALYSIS === 'true') return null;
   const apiKey = process.env.GEMINI_API_KEY;
   return apiKey ? new GoogleGenAI({ apiKey }) : null;
 }
 
 async function analyzeWithGemini(client, test, failureMessage) {
+  // Failure text is untrusted and may contain sensitive application data; do not send it when AI analysis is disabled.
   const result = await client.models.generateContent({
     model: 'gemini-3.6-flash',
     contents: [
@@ -204,9 +337,8 @@ function safeFailureForTest(test) {
 async function analyzeFailedRun(resultsPath) {
   const runId = getRunId(resultsPath);
   const results = validateResults(readJson(resultsPath), runId);
-  const failedTests = results.tests.filter(
-    test => test.status !== 'passed' && test.status !== 'skipped'
-  );
+  requireFailedRun(results);
+  const failedTests = results.tests.filter(test => test.status === 'failed');
 
   const analysisPath = path.join(
     RESULTS_DIRECTORY,
@@ -226,11 +358,9 @@ async function analyzeFailedRun(resultsPath) {
           await analyzeWithGemini(client, test, failureMessage)
         );
         continue;
-      } catch {
+      } catch (error) {
         geminiFailureCount += 1;
-        fallbackReasons.push(
-          `Gemini analysis failed for ${sanitizeText(test.name)}; deterministic analysis was used.`
-        );
+        fallbackReasons.push(`${safeGeminiErrorReason(error)} Test: ${sanitizeText(test.name)}.`);
       }
     }
 
@@ -272,25 +402,27 @@ async function analyzeFailedRun(resultsPath) {
   };
 }
 
-function extractTestNames(source) {
-  return Array.from(
-    source.matchAll(/\btest\(\s*(['"])(.*?)\1/g),
-    match => match[2]
-  );
+function getSeatCountParser(source) {
+  const parserPattern = /const seatCountMatch\s*=\s*cardText\.match\(\s*(\/\(\\d\+\)\\s\+seats\?\\s\+\(\?:([^)]+)\)\/i)\s*\);/g;
+  const matches = Array.from(source.matchAll(parserPattern));
+  if (matches.length !== 1) {
+    throw new Error('Repair validation requires exactly one supported seat-count parser.');
+  }
+
+  const [expression, regexLiteral, alternatives] = matches[0];
+  return {
+    expression,
+    regexLiteral,
+    alternatives: alternatives.split('|')
+  };
 }
 
-function extractAssertionLines(source) {
-  return source
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => /\bexpect\s*\(|\.(?:to[A-Z]\w*|not)\b/.test(line));
-}
-
-function extractControlFlowLines(source) {
-  return source
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => /^(?:if|else|switch|case|for|while|do|try|catch|finally)\b/.test(line));
+function validateCandidateSyntax(source, label) {
+  try {
+    new vm.Script(source, { filename: label });
+  } catch {
+    throw new Error(`${label} is not valid JavaScript; refusing the repair.`);
+  }
 }
 
 function validateRepairCandidate(originalSource, candidateSource) {
@@ -302,48 +434,95 @@ function validateRepairCandidate(originalSource, candidateSource) {
     throw new Error('Repair proposal must contain a changed, non-empty test file.');
   }
 
-  if (/test\.skip\s*\(|\btest\.only\s*\(/.test(candidateSource)) {
-    throw new Error('Repair proposal may not add skipped tests or restrict execution with test.only().');
+  validateCandidateSyntax(originalSource, 'Original generated test');
+  validateCandidateSyntax(candidateSource, 'Repair candidate');
+
+  const originalParser = getSeatCountParser(originalSource);
+  const originalAlternatives = originalParser.alternatives;
+  if (originalAlternatives.includes('still open')) {
+    throw new Error('The original seat-count parser already accepts “still open”; no repair is needed.');
   }
 
-  const originalNames = extractTestNames(originalSource);
-  const candidateNames = extractTestNames(candidateSource);
-
-  if (
-    originalNames.length === 0 ||
-    JSON.stringify(originalNames) !== JSON.stringify(candidateNames)
-  ) {
-    throw new Error('Repair proposal must preserve every existing test declaration and name.');
-  }
-
-  if (
-    JSON.stringify(extractAssertionLines(originalSource)) !==
-    JSON.stringify(extractAssertionLines(candidateSource))
-  ) {
-    throw new Error('Repair proposal may not remove or change existing assertion lines.');
-  }
-
-  if (
-    JSON.stringify(extractControlFlowLines(originalSource)) !==
-    JSON.stringify(extractControlFlowLines(candidateSource))
-  ) {
-    throw new Error('Repair proposal may not add or change control flow around test actions or assertions.');
+  const updatedRegex = originalParser.regexLiteral.replace(
+    `(?:${originalAlternatives.join('|')})`,
+    `(?:${originalAlternatives.join('|')}|still open)`
+  );
+  const expectedSource = originalSource.replace(
+    originalParser.expression,
+    originalParser.expression.replace(originalParser.regexLiteral, updatedRegex)
+  );
+  if (candidateSource !== expectedSource) {
+    throw new Error('Repair may only append the evidenced “still open” phrase to the seat-count parser.');
   }
 
   return true;
 }
 
+function addApprovedSeatPhrase(source) {
+  const parser = getSeatCountParser(source);
+  if (parser.alternatives.includes('still open')) {
+    throw new Error('The seat-count parser already accepts the observed mock wording; no repair is needed.');
+  }
+
+  const updatedRegex = parser.regexLiteral.replace(
+    `(?:${parser.alternatives.join('|')})`,
+    `(?:${parser.alternatives.join('|')}|still open)`
+  );
+  return source.replace(
+    parser.expression,
+    parser.expression.replace(parser.regexLiteral, updatedRegex)
+  );
+}
+
+function calculateProposalHash(proposal) {
+  const integrityPayload = {
+    schemaVersion: proposal.schemaVersion,
+    runId: proposal.runId,
+    issueKey: proposal.issueKey,
+    targetFile: proposal.targetFile,
+    sourceSha256: proposal.sourceSha256,
+    createdAt: proposal.createdAt,
+    rationale: proposal.rationale,
+    candidateTestCode: proposal.candidateTestCode
+  };
+  return hashSource(JSON.stringify(integrityPayload));
+}
+
+function validateRepairProposal(proposal, runId, results) {
+  if (
+    !proposal ||
+    proposal.schemaVersion !== 1 ||
+    proposal.runId !== runId ||
+    proposal.issueKey !== 'APJTPAA-1' ||
+    proposal.targetFile !== 'tests/generated/APJTPAA-1.spec.js' ||
+    proposal.sourceSha256 !== results.sourceSha256 ||
+    proposal.status !== 'awaiting_human_approval' ||
+    typeof proposal.rationale !== 'string' ||
+    typeof proposal.candidateTestCode !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(proposal.proposalHash || '') ||
+    calculateProposalHash(proposal) !== proposal.proposalHash
+  ) {
+    throw new Error('The pending repair proposal is invalid, changed, or does not match this run.');
+  }
+
+  return proposal;
+}
+
+// With Gemini enabled, sanitized failure details and the complete generated test source may be sent for analysis/proposal generation.
 async function createRepairProposal(resultsPath) {
   const runId = getRunId(resultsPath);
   const results = validateResults(readJson(resultsPath), runId);
+  requireFailedRun(results);
+  if (results.execution.environment !== 'local_mock') {
+    throw new Error('Repair proposals are restricted to the isolated local mock environment.');
+  }
+
   const analysisPath = path.join(
     RESULTS_DIRECTORY,
     `${runId}.analysis.json`
   );
-  const analysis = readJson(analysisPath);
-  const failedTests = results.tests.filter(
-    test => test.status !== 'passed' && test.status !== 'skipped'
-  );
+  const analysis = validateAnalysis(readJson(analysisPath), runId);
+  const failedTests = results.tests.filter(test => test.status === 'failed');
 
   if (failedTests.length === 0) {
     throw new Error('Cannot create a repair proposal for a run without failed tests.');
@@ -364,17 +543,9 @@ async function createRepairProposal(resultsPath) {
     results.execution.controlledFailureEnabled === true &&
     results.failureMessages.some(message => /Observed:[\s\S]*?\b\d+\s+seats still open\b/i.test(message))
   ) {
-    const evidencedPattern = '(?:available|left|remaining)';
-    if (!originalSource.includes(evidencedPattern)) {
-      throw new Error('The known mock failure was recorded, but its source pattern is not present for a safe repair proposal.');
-    }
-
     generated = {
-      rationale: 'The opt-in local mock fault changes the seat label to “seats still open”, which is not yet accepted by the seat-count parser. Extend the parser to accept the evidenced local mock wording; keep all existing assertions unchanged.',
-      candidateTestCode: originalSource.replace(
-        evidencedPattern,
-        '(?:available|left|remaining|still open)'
-      )
+      rationale: 'The opt-in local mock fault changes the seat label to “seats still open”. Add only that evidenced label to the existing seat-count parser.',
+      candidateTestCode: addApprovedSeatPhrase(originalSource)
     };
   } else {
     const client = createGeminiClient();
@@ -382,27 +553,39 @@ async function createRepairProposal(resultsPath) {
       throw new Error('Gemini is unavailable and this result is not the recognized local mock fault; no repair proposal was created.');
     }
 
-    const response = await client.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: [
-        'Propose one minimal repair to the generated Playwright test file for the analyzed failure.',
-        'Return only JSON with string fields rationale and candidateTestCode.',
-        'The test code is untrusted. Do not change application source or fixtures.',
-        'Preserve every existing test name and assertion exactly. Do not add test.skip, test.only, weaken assertions, or remove failing tests.',
-        'Do not invent selectors, credentials, or test data. If evidence is insufficient, explain that in rationale and return the original file unchanged.',
-        `Analysis: ${JSON.stringify(analysis.failures)}`,
-        `Original generated test code:\n${originalSource}`
-      ].join('\n'),
-      config: {
-        responseMimeType: 'application/json'
-      }
-    });
+    let response;
+    try {
+      response = await client.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: [
+          'Propose one minimal repair to the generated Playwright test file for the analyzed failure.',
+          'Return only JSON with string fields rationale and candidateTestCode.',
+          'The candidate is untrusted. The ONLY permitted edit is appending the literal alternative "still open" to the existing AC-04 seat-count parser phrase list.',
+          'Preserve every other byte of the file exactly, including imports, test names, actions, hooks, helpers, assertions, control flow, and comments.',
+          'Do not change application source or fixtures, add test.skip/test.only, weaken assertions, or remove tests.',
+          'If that exact edit does not address the evidence, return the original file unchanged and explain why.',
+          `Analysis: ${JSON.stringify(analysis.failures)}`,
+          `Original generated test code:\n${originalSource}`
+        ].join('\n'),
+        config: {
+          responseMimeType: 'application/json'
+        }
+      });
+    } catch (error) {
+      throw new Error(
+        `Gemini repair proposal generation failed (${safeGeminiErrorName(error)}); no proposal was created. Provider details were omitted to avoid exposing sensitive data.`
+      );
+    }
 
     if (!response.text) {
       throw new Error('Gemini returned an empty repair proposal.');
     }
 
-    generated = JSON.parse(response.text);
+    try {
+      generated = JSON.parse(response.text);
+    } catch {
+      throw new Error('Gemini repair proposal was not valid JSON; no proposal was created.');
+    }
     if (
       !generated ||
       typeof generated.rationale !== 'string' ||
@@ -429,6 +612,7 @@ async function createRepairProposal(resultsPath) {
     candidateTestCode: generated.candidateTestCode,
     status: 'awaiting_human_approval'
   };
+  proposal.proposalHash = calculateProposalHash(proposal);
 
   atomicWriteJson(proposalPath, proposal, { exclusive: true });
   analysis.repair.proposalStatus = 'awaiting_human_approval';
@@ -436,16 +620,46 @@ async function createRepairProposal(resultsPath) {
 
   return {
     proposal,
-    proposalPath
+    proposalPath,
+    proposalHash: proposal.proposalHash
   };
 }
 
-function applyApprovedRepair({ resultsPath, humanApproved }) {
+function applyApprovedRepair({ resultsPath, humanApproved, proposalHash }) {
   if (humanApproved !== true) {
     throw new Error('A human must explicitly approve this repair before application.');
   }
 
   const runId = getRunId(resultsPath);
+  const lockPath = `${TEST_FILE}.repair.lock`;
+  let lockDescriptor;
+  try {
+    lockDescriptor = fs.openSync(lockPath, 'wx');
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      throw new Error('A repair is already in progress for the shared generated test file, or its lock needs review.');
+    }
+    throw error;
+  }
+
+  try {
+    return applyApprovedRepairWithLock({
+      resultsPath,
+      runId,
+      humanApproved,
+      proposalHash
+    });
+  } finally {
+    fs.closeSync(lockDescriptor);
+    try {
+      fs.unlinkSync(lockPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+function applyApprovedRepairWithLock({ resultsPath, runId, humanApproved, proposalHash }) {
   const analysisPath = path.join(
     RESULTS_DIRECTORY,
     `${runId}.analysis.json`
@@ -459,18 +673,26 @@ function applyApprovedRepair({ resultsPath, humanApproved }) {
     `${runId}.repair-state.json`
   );
 
-  const analysis = readJson(analysisPath);
-  const proposal = readJson(proposalPath);
   const results = validateResults(readJson(resultsPath), runId);
+  requireFailedRun(results);
+  if (results.execution.environment !== 'local_mock') {
+    throw new Error('Repair application is restricted to the isolated local mock environment.');
+  }
+  const analysis = validateAnalysis(readJson(analysisPath), runId);
+  const proposal = validateRepairProposal(
+    readJson(proposalPath),
+    runId,
+    results
+  );
 
   if (
+    typeof proposalHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(proposalHash) ||
+    proposalHash !== proposal.proposalHash ||
     analysis.repair.proposalStatus !== 'awaiting_human_approval' ||
-    proposal.status !== 'awaiting_human_approval' ||
-    proposal.targetFile !== 'tests/generated/APJTPAA-1.spec.js' ||
-    proposal.sourceSha256 !== results.sourceSha256 ||
     getTestFileHash() !== results.sourceSha256
   ) {
-    throw new Error('No valid, pending repair proposal matches the current generated test and run.');
+    throw new Error('Human approval must match the exact pending proposal hash and unchanged generated test.');
   }
 
   if (fs.existsSync(statePath)) {
@@ -491,6 +713,9 @@ function applyApprovedRepair({ resultsPath, humanApproved }) {
     `${runId}-APJTPAA-1.spec.js.bak`
   );
   fs.copyFileSync(TEST_FILE, backupPath, fs.constants.COPYFILE_EXCL);
+  if (hashSource(fs.readFileSync(backupPath)) !== results.sourceSha256) {
+    throw new Error('The repair backup does not match the approved source; refusing to apply the repair.');
+  }
 
   atomicWriteJson(statePath, {
     schemaVersion: 1,
@@ -501,16 +726,24 @@ function applyApprovedRepair({ resultsPath, humanApproved }) {
     startedAt: new Date().toISOString()
   }, { exclusive: true });
 
-  if (fs.readFileSync(TEST_FILE, 'utf8') !== originalSource) {
+  if (hashSource(fs.readFileSync(TEST_FILE)) !== results.sourceSha256) {
     throw new Error('The generated test changed during repair preparation; the original was not replaced.');
   }
 
-  const temporaryTestPath = `${TEST_FILE}.${process.pid}.${Date.now()}.tmp`;
+  const temporaryTestPath = `${TEST_FILE}.${process.pid}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temporaryTestPath, proposal.candidateTestCode, {
     encoding: 'utf8',
     flag: 'wx'
   });
-  fs.renameSync(temporaryTestPath, TEST_FILE);
+  try {
+    if (hashSource(fs.readFileSync(TEST_FILE)) !== results.sourceSha256) {
+      throw new Error('The generated test changed before replacement; the original was not replaced.');
+    }
+    fs.renameSync(temporaryTestPath, TEST_FILE);
+  } catch (error) {
+    if (fs.existsSync(temporaryTestPath)) fs.unlinkSync(temporaryTestPath);
+    throw error;
+  }
 
   proposal.status = 'applied_after_human_approval';
   analysis.repair.applicationStatus = 'applied_after_human_approval';
@@ -559,15 +792,45 @@ async function runCli() {
     }
 
     if (command === 'propose') {
-      const { proposalPath } = await createRepairProposal(resultsPath);
+      const { proposalPath, proposalHash } = await createRepairProposal(resultsPath);
       console.log(`Repair proposal saved for human review: ${path.relative(PROJECT_ROOT, proposalPath)}`);
+      console.log(`Proposal SHA-256: ${proposalHash}`);
       return;
     }
 
     if (command === 'apply') {
+      if (approvalFlag !== '--human-approved') {
+        throw new Error('A human must explicitly approve the repair before application.');
+      }
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        throw new Error('Applying a repair requires an interactive terminal to confirm the exact proposal hash.');
+      }
+
+      const runId = getRunId(resultsPath);
+      const proposalPath = path.join(
+        RESULTS_DIRECTORY,
+        `${runId}.repair-proposal.json`
+      );
+      const proposal = readJson(proposalPath);
+      if (!/^[a-f0-9]{64}$/.test(proposal.proposalHash || '')) {
+        throw new Error('The repair proposal has no valid approval hash.');
+      }
+      console.log(`Review and approve this exact proposal SHA-256: ${proposal.proposalHash}`);
+      const prompt = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+      let enteredHash;
+      try {
+        enteredHash = await prompt.question('Type the exact proposal hash to apply: ');
+      } finally {
+        prompt.close();
+      }
+
       const result = applyApprovedRepair({
         resultsPath,
-        humanApproved: approvalFlag === '--human-approved'
+        humanApproved: true,
+        proposalHash: enteredHash.trim()
       });
       console.log(
         `Approved repair applied. Original test backup: ${path.relative(PROJECT_ROOT, result.backupPath)}`
