@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jira AI Automation Agent</title>
+  <title>JiraPilot AI</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -30,50 +29,70 @@
     }
     textarea { min-height: 90px; resize: vertical; }
     button {
-      margin-top: 16px; padding: 12px 18px; border: 0;
+      margin: 16px 8px 0 0; padding: 12px 18px; border: 0;
       border-radius: 7px; background: #4f46e5;
       color: white; font-weight: bold; cursor: pointer;
     }
     button:disabled { opacity: .6; cursor: wait; }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+    .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; }
     .stat { background: #eef2ff; padding: 18px; border-radius: 9px; }
     .stat strong { display: block; font-size: 24px; margin-top: 10px; }
     .muted { color: #667085; font-size: 14px; }
     .item { border-bottom: 1px solid #e5e7eb; padding: 12px 0; }
     .status { color: #b45309; font-weight: bold; }
-    pre { background: #111827; color: #e5e7eb; padding: 16px;
-      border-radius: 8px; overflow: auto; white-space: pre-wrap; }
-    @media (max-width: 650px) {
+    pre {
+      background: #111827; color: #e5e7eb; padding: 16px;
+      border-radius: 8px; overflow: auto; white-space: pre-wrap;
+    }
+    a { overflow-wrap: anywhere; }
+    @media (max-width: 850px) {
+      .grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 560px) {
       .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>AI-Powered Jira-to-PR Automation Agent</h1>
-    <p>Turn Jira requirements into Playwright tests and review-ready code.</p>
+    <h1>JiraPilot AI</h1>
+    <p>From Jira requirements to Playwright validation and review-ready pull requests.</p>
   </header>
 
   <main>
     <section class="card">
       <h2>Requirement Input</h2>
       <p class="muted">Enter your Jira issue key to begin the automation workflow.</p>
+
       <label for="issue">Jira Issue Key</label>
       <input id="issue" value="APJTPAA-1" placeholder="Example: APJTPAA-1">
+
       <label for="requirement">Requirement</label>
       <textarea id="requirement">Automate EventHub ticket booking. Verify that booking one ticket decreases the available seat count by exactly one.</textarea>
+
       <button id="analyze" onclick="analyzeRequirement()">Analyze Requirement</button>
       <button id="runTests" onclick="runPlaywrightTests()">Run Playwright Tests</button>
+      <label>
+        <input id="environmentApproval" type="checkbox" style="width: auto">
+        I approve one generated Playwright run against the local mock only. Booking scenarios
+        may create bookings in the isolated mock environment; real EventHub is not accessed.
+      </label>
+
       <pre id="testOutput">No test run yet.</pre>
       <p id="message" class="muted">Ready to start.</p>
+      <p id="workflowStatus" class="status">Loading workflow status...</p>
+      <p id="executionEnvironment" class="muted">Loading execution environment...</p>
+      <p id="resultLocation" class="muted"></p>
     </section>
 
     <section class="card">
       <h2>Automation Overview</h2>
       <div class="grid">
         <div class="stat">Test scenarios<strong id="scenarioCount">0</strong></div>
+        <div class="stat">Total tests<strong id="totalTests">0</strong></div>
         <div class="stat">Tests passed<strong id="passed">—</strong></div>
         <div class="stat">Tests failed<strong id="failed">—</strong></div>
+        <div class="stat">Tests skipped<strong id="skipped">—</strong></div>
       </div>
     </section>
 
@@ -83,13 +102,140 @@
     </section>
 
     <section class="card">
+      <h2>Acceptance-Criteria Scenario Coverage</h2>
+      <div id="trackedScenarios" class="muted">Loading the saved test plan…</div>
+    </section>
+
+    <section class="card">
+      <h2>Failure Analysis</h2>
+      <p id="analysisStatus" class="muted">No analysis available.</p>
+      <div id="failureAnalysis" class="muted">No failures recorded.</div>
+      <p><strong>Repair approval:</strong> <span id="repairApprovalStatus">Not requested</span></p>
+      <p class="muted">Repair proposals require review and explicit human approval; this dashboard does not apply repairs.</p>
+    </section>
+
+    <section class="card">
       <h2>GitHub Pull Request</h2>
-      <p id="prStatus" class="status">Not created</p>
-      <p class="muted">After test generation and validation, the agent will prepare a feature branch and PR for human review.</p>
+      <p id="prStatus" class="status">Proposal not loaded</p>
+      <p id="prBranch" class="muted"></p>
+      <p id="prTestStatus" class="muted"></p>
+      <p id="prResultFile" class="muted">No successful execution result selected.</p>
+      <h3>Proposed title</h3>
+      <p id="prTitle" class="muted">No proposal loaded.</p>
+      <h3>Proposed description</h3>
+      <pre id="prDescription">No proposal loaded.</pre>
+      <h3>Current working-tree paths (review before publication)</h3>
+      <div id="prFiles" class="muted">No file list loaded.</div>
+      <p id="prApprovalStatus" class="status">
+        Awaiting explicit human approval in Copilot Chat.
+      </p>
+      <p id="prPublicationNote" class="muted">
+        This dashboard prepares a proposal only. It cannot publish a branch, commit, or pull request.
+      </p>
+      <p class="muted">
+        Prior read-only review: PRs #1 and #2 duplicate scenario-only content; PR #3 contains
+        <code>test.skip()</code> placeholders. Refresh their status with GitHub MCP before publication.
+      </p>
+      <button id="refreshPRProposal" onclick="refreshPRProposal()">
+        Refresh PR Proposal
+      </button>
     </section>
   </main>
 
   <script>
+    let currentScenarios = [];
+    let currentSummary = '';
+
+    function appendText(parent, tagName, text, className) {
+      const element = document.createElement(tagName);
+      element.textContent = text;
+      if (className) element.className = className;
+      parent.appendChild(element);
+      return element;
+    }
+
+    function renderWorkflowDashboard(data) {
+      document.getElementById('workflowStatus').textContent =
+        `Workflow status: ${data.workflowStatus}`;
+      document.getElementById('scenarioCount').textContent = data.scenarios.length;
+      document.getElementById('totalTests').textContent = data.summary.total;
+      document.getElementById('passed').textContent = data.summary.passed;
+      document.getElementById('failed').textContent = data.summary.failed;
+      document.getElementById('skipped').textContent = data.summary.skipped;
+      document.getElementById('resultLocation').textContent = data.resultFile
+        ? `Structured result: ${data.resultFile}`
+        : 'No structured test run has been recorded.';
+      const environment = data.executionEnvironment || 'not run';
+      const liveStatus = data.liveEventHubStatus === 'performed'
+        ? `Real EventHub testing has been performed (${data.liveEventHubResultFile}).`
+        : 'Real EventHub testing has not been performed.';
+      document.getElementById('executionEnvironment').textContent =
+        `Latest execution environment: ${environment}. ${liveStatus}`;
+      document.getElementById('repairApprovalStatus').textContent =
+        data.repairApprovalStatus.replaceAll('_', ' ');
+      document.getElementById('analysisStatus').textContent =
+        `Analysis source status: ${data.analysisStatus}`;
+
+      const scenarios = document.getElementById('trackedScenarios');
+      scenarios.replaceChildren();
+      const generatedScenarios = document.getElementById('scenarios');
+      generatedScenarios.replaceChildren();
+      if (data.scenarios.length === 0) {
+        appendText(generatedScenarios, 'p', 'No generated test scenarios are mapped in the saved plan.');
+        appendText(scenarios, 'p', 'No saved acceptance-criteria test plan is available.');
+      }
+      data.scenarios.forEach(scenario => {
+        const generatedItem = document.createElement('div');
+        generatedItem.className = 'item';
+        appendText(generatedItem, 'strong', `${scenario.id}: ${scenario.title || 'Untitled criterion'}`);
+        appendText(generatedItem, 'p', `Execution: ${scenario.executionStatus || 'not run'}`);
+        generatedScenarios.appendChild(generatedItem);
+
+        const item = document.createElement('div');
+        item.className = 'item';
+        appendText(item, 'strong', `${scenario.id}: ${scenario.title || 'Untitled criterion'}`);
+        appendText(
+          item,
+          'p',
+          `Coverage: ${scenario.coverageStatus}; execution: ${scenario.executionStatus || 'not run'}`
+        );
+        if (scenario.blockedReason) appendText(item, 'p', `Blocked: ${scenario.blockedReason}`);
+        scenario.assertions.forEach(assertion => appendText(item, 'p', `Expected: ${assertion}`));
+        scenarios.appendChild(item);
+      });
+
+      const failures = document.getElementById('failureAnalysis');
+      failures.replaceChildren();
+      if (data.failureAnalysis.length === 0) {
+        appendText(failures, 'p', 'No failure analysis is available for the latest run.');
+      }
+      data.failureAnalysis.forEach(failure => {
+        const item = document.createElement('div');
+        item.className = 'item';
+        appendText(item, 'strong', `${failure.testName}: ${failure.errorCategory}`);
+        appendText(item, 'p', `Failure: ${failure.failureReason}`);
+        appendText(item, 'p', `Likely cause: ${failure.rootCause}`);
+        appendText(item, 'p', `Suggested next step: ${failure.suggestedFix}`);
+        appendText(item, 'p', `Confidence: ${Math.round(failure.confidence * 100)}%`);
+        failures.appendChild(item);
+      });
+    }
+
+    async function refreshWorkflowDashboard() {
+      const issue = document.getElementById('issue').value.trim();
+      try {
+        const response = await fetch(
+          `/api/workflow-status?issue=${encodeURIComponent(issue)}`
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load workflow status.');
+        renderWorkflowDashboard(data);
+      } catch (error) {
+        document.getElementById('workflowStatus').textContent =
+          `Workflow status unavailable: ${error.message}`;
+      }
+    }
+
     async function analyzeRequirement() {
       const issue = document.getElementById("issue").value.trim();
       const requirement = document.getElementById("requirement").value.trim();
@@ -105,6 +251,7 @@
       message.textContent = "Analyzing requirement...";
       document.getElementById("scenarios").textContent = "Working...";
       document.getElementById("scenarioCount").textContent = "0";
+      document.getElementById("prStatus").textContent = "Proposal not refreshed";
 
       try {
         const response = await fetch("/api/analyze", {
@@ -112,77 +259,158 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ issue, requirement })
         });
+
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Request failed");
 
-        document.getElementById("scenarioCount").textContent =
-          data.scenarios.length;
+        currentScenarios = Array.isArray(data.scenarios) ? data.scenarios : [];
+        currentSummary = data.summary || requirement;
 
-        
-    document.getElementById("scenarios").innerHTML =
-    data.scenarios.map((s, i) =>
-    `<div class="item"><strong>${i + 1}. ${escapeHtml(typeof s === "string" ? s : s.title)}</strong>
-     <p>${escapeHtml(typeof s === "string" ? "" : (s.expected || ""))}</p></div>`
-    ).join("");
- 
+        document.getElementById("scenarioCount").textContent =
+          currentScenarios.length;
+
+        const container = document.getElementById("scenarios");
+        container.replaceChildren();
+
+        currentScenarios.forEach((scenario, index) => {
+          const item = document.createElement("div");
+          item.className = "item";
+
+          const heading = document.createElement("strong");
+          heading.textContent = `${index + 1}. ${
+            typeof scenario === "string"
+              ? scenario
+              : scenario.title || scenario.name || `Test Scenario ${index + 1}`
+          }`;
+          item.appendChild(heading);
+
+          const description = document.createElement("p");
+          description.textContent = typeof scenario === "string"
+            ? ""
+            : scenario.expected || scenario.description || "";
+          item.appendChild(description);
+
+          container.appendChild(item);
+        });
 
         message.textContent = "Analysis completed. Mode: " + data.mode;
+        await refreshWorkflowDashboard();
+        await refreshPRProposal();
       } catch (error) {
-        message.textContent = "Error: " + error.message;
+        currentScenarios = [];
         document.getElementById("scenarios").textContent =
           "Analysis could not be completed.";
+        message.textContent = "Error: " + error.message;
       } finally {
         button.disabled = false;
       }
     }
 
-    function escapeHtml(value) {
-      const div = document.createElement("div");
-      div.textContent = value;
-      return div.innerHTML;
+    async function runPlaywrightTests() {
+      const button = document.getElementById('runTests');
+      const output = document.getElementById('testOutput');
+      const approval = document.getElementById('environmentApproval');
+
+      if (!approval.checked) {
+        output.textContent = 'Execution was not approved. No tests were started.';
+        document.getElementById('message').textContent =
+          'Confirm the target environment before requesting this run.';
+        return;
+      }
+      approval.checked = false;
+
+      button.disabled = true;
+      button.textContent = 'Running tests...';
+      output.textContent = 'Starting only the generated APJTPAA-1 Playwright tests...';
+
+      try {
+        const response = await fetch('/api/run-tests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            issueKey: document.getElementById('issue').value.trim(),
+            environmentApproval: true
+          })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Could not run tests.');
+        }
+
+        output.textContent =
+          `Status: ${data.execution.status}\n` +
+          `Total: ${data.summary.total}, passed: ${data.summary.passed}, ` +
+          `failed: ${data.summary.failed}, skipped: ${data.summary.skipped}\n` +
+          `Result: ${data.resultFile}`;
+
+        document.getElementById('message').textContent =
+          data.success ? 'Playwright execution completed successfully.' :
+            data.execution.status === 'blocked'
+              ? 'The runner approval guard blocked execution; no tests were started.'
+              : 'Playwright execution failed. Review the structured results and analysis.';
+      } catch (error) {
+        output.textContent = error.message;
+        document.getElementById('message').textContent =
+          'Could not complete the test run.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Run Playwright Tests';
+        await refreshWorkflowDashboard();
+      }
     }
 
+    async function refreshPRProposal() {
+      const button = document.getElementById('refreshPRProposal');
+      button.disabled = true;
+      document.getElementById('prStatus').textContent = 'Validating proposal inputs...';
+      try {
+        const issueKey = document.getElementById('issue').value.trim();
+        const response = await fetch(
+          `/api/pr-proposal?issue=${encodeURIComponent(issueKey)}`
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not prepare proposal.');
 
-    
-async function runPlaywrightTests() {
-  const button = document.getElementById('runTests');
-  const output = document.getElementById('testOutput');
-  const passed = document.getElementById('passed');
-  const failed = document.getElementById('failed');
+        document.getElementById('prTitle').textContent = data.title;
+        document.getElementById('prDescription').textContent = data.description;
+        document.getElementById('prBranch').textContent =
+          `Source branch: ${data.branch || 'unavailable'}`;
+        document.getElementById('prTestStatus').textContent =
+          `Latest test status: ${data.testStatus}`;
+        document.getElementById('prResultFile').textContent =
+          data.resultFileName
+            ? `Selected successful result: ${data.resultFileName}`
+            : 'No successful execution result is available for this proposal.';
+        document.getElementById('prStatus').textContent = data.preparationReady
+          ? 'Proposal prepared; awaiting human review'
+          : `Proposal blocked: ${data.preparationBlockers.join(' ')}`;
+        document.getElementById('prApprovalStatus').textContent =
+          `Approval: ${data.approvalStatus.replaceAll('_', ' ')}`;
+        document.getElementById('prPublicationNote').textContent =
+          `${data.notice} No GitHub publication has been performed.`;
 
-  button.disabled = true;
-  button.textContent = 'Running tests...';
-  output.textContent = 'Playwright is running your EventHub test...';
+        const files = document.getElementById('prFiles');
+        files.replaceChildren();
+        if (data.changedFiles.length === 0) {
+          appendText(files, 'p', 'No uncommitted file paths detected.');
+        }
+        data.changedFiles.forEach(file => appendText(files, 'p', file, 'item'));
+        document.getElementById('message').textContent = data.preparationReady
+          ? 'PR draft prepared locally. Review its scope and status before any publication request.'
+          : 'PR draft cannot be prepared until its blockers are resolved.';
+      } catch (error) {
+        document.getElementById('prStatus').textContent =
+          `Proposal unavailable: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
 
-  try {
-    const response = await fetch('/api/run-tests', {
-      method: 'POST'
+    document.addEventListener('DOMContentLoaded', () => {
+      refreshWorkflowDashboard();
+      refreshPRProposal();
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Could not run tests.');
-    }
-
-    passed.textContent = data.passed;
-    failed.textContent = data.failed;
-    output.textContent = data.output || 'No test output returned.';
-
-    document.getElementById('message').textContent =
-      data.success
-        ? 'Playwright execution completed successfully.'
-        : 'Playwright execution failed. Check the output below.';
-  } catch (error) {
-    output.textContent = error.message;
-    document.getElementById('message').textContent =
-      'Could not complete the test run.';
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Run Playwright Tests';
-  }
-}
-
   </script>
 </body>
 </html>
