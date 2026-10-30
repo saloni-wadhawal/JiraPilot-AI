@@ -1,8 +1,6 @@
 # JiraPilot AI – AI-Powered Jira-to-Playwright Automation Agent
+**Transform Jira requirements into automated Playwright tests using AI.**
 
-<p align="center">
-  **Transform Jira requirements into automated Playwright tests using AI.**
-</p>
 
 ## Overview
 
