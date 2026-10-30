@@ -5,6 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "test:apjtpaa-1": "node src/execution/run-generated-tests.js --mock",
+    "test:apjtpaa-1:mock": "node src/execution/run-generated-tests.js --mock",
+    "test:apjtpaa-1:mock:failure": "node src/execution/run-generated-tests.js --mock --mock-failure",
+    "test:live:eventhub": "playwright test tests/eventhub-booking.spec.js --config=playwright.live.config.js",
     "start": "node server.js"
   },
   "keywords": [],

@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "issue": {
+    "key": "APJTPAA-1",
+    "summary": "Automate EventHub Ticket Booking Using Playwright",
+    "status": "To Do",
+    "source": "Atlassian MCP read-only retrieval",
+    "description": "As a QA engineer, I want to automate EventHub ticket booking using Playwright so that the booking workflow and seat count can be verified automatically."
+  },
+  "technicalRequirements": [
+    "Use Playwright with JavaScript.",
+    "Generate automated test cases from this requirement.",
+    "Execute the tests and generate an HTML report.",
+    "Prepare the test code for a GitHub Pull Request."
+  ],
+  "testEnvironment": {
+    "identifiedTarget": "http://127.0.0.1:4173, served by tests/mock-eventhub/server.js",
+    "approvedIsolatedEnvironment": "Local-only mock bound to loopback; browser requests outside 127.0.0.1:4173 are blocked and fail the test.",
+    "executionStatus": "not_run",
+    "reason": "No Playwright or browser test was run. AC-01 through AC-07 are configured for the local mock, including state reset before each booking scenario. Booking scenarios affect only the loopback mock. The original live EventHub booking test remains a separate approval-guarded target."
+  },
+  "criteria": [
+    {
+      "id": "AC-01",
+      "sourceText": "Open the EventHub application.",
+      "testId": "ac-01-open-eventhub",
+      "testTitle": "[AC-01] Open the EventHub application",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "The local EventHub mock is started by the Playwright configuration."
+      ],
+      "testData": [],
+      "actions": [
+        "Navigate to the existing test's EventHub login URL."
+      ],
+      "assertions": [
+        "The existing email placeholder is visible.",
+        "The existing Sign In button is visible."
+      ],
+      "sideEffects": "read-only navigation",
+      "selectorEvidence": [
+        "getByPlaceholder('you@email.com') and getByRole('button', { name: 'Sign In' }) are used in tests/eventhub-booking.spec.js."
+      ],
+      "blockedReason": null,
+      "executionStatus": "not_run_local_mock_available",
+      "executionBlockedReason": null
+    },
+    {
+      "id": "AC-02",
+      "sourceText": "Log in with valid test credentials.",
+      "testId": "ac-02-login-with-valid-test-credentials",
+      "testTitle": "[AC-02] Log in with configured test credentials",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "The local mock accepts the fixed dummy credentials declared in the generated test."
+      ],
+      "testData": [
+        "qa@example.test and LocalMockOnly-123! are test-only dummy credentials accepted only by the local mock."
+      ],
+      "actions": [
+        "Open the existing login URL.",
+        "Fill the evidenced email placeholder and password selector.",
+        "Click the evidenced Sign In button."
+      ],
+      "assertions": [
+        "The page URL becomes the EventHub application root, matching the existing test."
+      ],
+      "sideEffects": "local mock session creation; no booking",
+      "selectorEvidence": [
+        "The existing test fills getByPlaceholder('you@email.com') and locator('#password'), clicks the Sign In button, and expects the application root URL."
+      ],
+      "executionStatus": "not_run_local_mock_available",
+      "blockedReason": null
+    },
+    {
+      "id": "AC-03",
+      "sourceText": "Select an available event.",
+      "testId": "ac-03-select-available-event",
+      "testTitle": "[AC-03] Select the evidenced EventHub event",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "AC-02 authentication succeeds against the local mock, which seeds the Dilli Diwali Mela event."
+      ],
+      "testData": [
+        "Dilli Diwali Mela is taken from the existing test; no new event name is introduced."
+      ],
+      "actions": [
+        "Open the existing Events URL.",
+        "Find the event card by its evidenced test ID and text.",
+        "Click the evidenced Book Now button to open the event details without submitting a booking."
+      ],
+      "assertions": [
+        "The event card is visible.",
+        "The Book Now button is enabled.",
+        "The event details heading is visible."
+      ],
+      "sideEffects": "read-only event selection; no booking submission",
+      "selectorEvidence": [
+        "The existing test filters getByTestId('event-card') by 'Dilli Diwali Mela', clicks getByTestId('book-now-btn'), and asserts the matching heading."
+      ],
+      "executionStatus": "not_run_local_mock_available",
+      "blockedReason": null
+    },
+    {
+      "id": "AC-04",
+      "sourceText": "Record the available seat count before booking.",
+      "testId": "ac-04-record-seat-count-before-booking",
+      "testTitle": "[AC-04] Record the available seat count before booking",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "AC-02 authentication succeeds and the seeded event is present in the local mock."
+      ],
+      "testData": [
+        "The seat-count text format is read using the exact regular expression from the existing test."
+      ],
+      "actions": [
+        "Open the existing Events URL.",
+        "Read the evidenced event card text and parse its available-seat count."
+      ],
+      "assertions": [
+        "A seat count matching the generated test's available, left, remaining, or still open text pattern is present.",
+        "The parsed count is a positive integer before booking."
+      ],
+      "sideEffects": "read-only",
+      "selectorEvidence": [
+        "The generated test uses getByTestId('event-card').filter({ hasText: 'Dilli Diwali Mela' }) and /(\\d+)\\s+seats?\\s+(?:available|left|remaining|still open)/i."
+      ],
+      "executionStatus": "not_run_local_mock_available",
+      "blockedReason": null
+    },
+    {
+      "id": "AC-05",
+      "sourceText": "Book one ticket.",
+      "testId": "ac-05-book-one-ticket",
+      "testTitle": "[AC-05] Book exactly one ticket",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "The local mock is started by the Playwright configuration.",
+        "Mock state is reset before the test."
+      ],
+      "testData": [
+        "The local mock event and dummy customer form values are used only at 127.0.0.1:4173."
+      ],
+      "actions": [
+        "Reset mock state, open the event booking form, verify exactly one ticket is selected, and submit the form once."
+      ],
+      "assertions": [
+        "The selected ticket count is 1.",
+        "Exactly one booking request is sent with ticketCount=1.",
+        "The local mock accepts the booking with a successful response."
+      ],
+      "sideEffects": "state-changing booking within the local mock only",
+      "selectorEvidence": [
+        "The local mock form exposes #ticket-count, #customerName, [data-testid='customer-email'], #phone, and the Confirm Booking button."
+      ],
+      "executionStatus": "not_run_local_mock_available",
+      "blockedReason": null
+    },
+    {
+      "id": "AC-06",
+      "sourceText": "Verify that the booking succeeds.",
+      "testId": "ac-06-verify-booking-success",
+      "testTitle": "[AC-06] Verify the booking confirmation",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "The local mock is started and reset before the test."
+      ],
+      "testData": [
+        "Dummy customer form values are accepted only by the local mock."
+      ],
+      "actions": [
+        "Submit exactly one ticket to the local mock once."
+      ],
+      "assertions": [
+        "The 'Booking Confirmed!' heading is visible.",
+        "The 'Your tickets are reserved.' message is visible."
+      ],
+      "sideEffects": "state-changing booking within the local mock only",
+      "selectorEvidence": [
+        "The local mock confirmation response contains both asserted confirmation messages."
+      ],
+      "executionStatus": "not_run_local_mock_available",
+      "blockedReason": null
+    },
+    {
+      "id": "AC-07",
+      "sourceText": "Verify that the available seat count decreases by exactly one.",
+      "testId": "ac-07-verify-seat-count-decrements-by-one",
+      "testTitle": "[AC-07] Verify exactly one seat is deducted",
+      "coverageStatus": "implemented",
+      "preconditions": [
+        "The local mock is started and reset before the test."
+      ],
+      "testData": [
+        "The mock starts each booking test with its fixed local seat count of 25."
+      ],
+      "actions": [
+        "Read the local mock seat count, submit exactly one ticket once, and read the updated count."
+      ],
+      "assertions": [
+        "The selected and submitted ticket count is 1.",
+        "The updated seat count equals the initial count minus exactly one."
+      ],
+      "sideEffects": "state-changing booking within the local mock only",
+      "selectorEvidence": [
+        "The local mock event card exposes the seat count; the generated test parses it before and after the single booking."
+      ],
+      "executionStatus": "not_run_local_mock_available",
+      "blockedReason": null
+    }
+  ],
+  "generatedTestFile": "tests/generated/APJTPAA-1.spec.js",
+  "generatedTestIds": [
+    "ac-01-open-eventhub",
+    "ac-02-login-with-valid-test-credentials",
+    "ac-03-select-available-event",
+    "ac-04-record-seat-count-before-booking",
+    "ac-05-book-one-ticket",
+    "ac-06-verify-booking-success",
+    "ac-07-verify-seat-count-decrements-by-one"
+  ],
+  "notGeneratedTestIds": [],
+  "validation": {
+    "planJson": "passed_node_json_parse_and_seven_unique_criteria_check",
+    "testSyntax": "passed_node_check",
+    "playwrightExecution": "not_run_by_request"
+  }
+}
