@@ -1,92 +1,313 @@
-# JiraPilot AI
+# JiraPilot AI – AI-Powered Jira-to-Playwright Automation Agent
+Transform Jira requirements into automated Playwright tests using AI.
 
-JiraPilot AI connects Jira acceptance criteria with generated Playwright tests and a local dashboard for reviewing test plans, execution results, and repair proposals. The repository includes an isolated EventHub mock so the generated booking scenarios can be exercised without visiting the real EventHub website or creating real bookings.
 
-## Features
+## Overview
 
-- Organizes Jira acceptance criteria into a test plan and generated Playwright scenarios.
-- Runs the APJTPAA-1 generated scenarios against a local-only EventHub mock.
-- Writes structured execution results and an HTML Playwright report.
-- Provides failure analysis and a narrowly constrained, human-approved repair workflow.
-- Provides a local Express dashboard for viewing generated scenarios, execution results, and PR proposals.
-- Keeps the live EventHub test configuration separate from local mock execution.
+JiraPilot AI is an AI-assisted QA automation project that converts Jira requirements and acceptance criteria into executable Playwright test cases.
 
-## Requirements
+It combines Jira integration, Gemini AI, Playwright automation, failure analysis, and human-approved test repair into a structured QA workflow.
 
-- Node.js and npm
-- Dependencies installed from the repository's lockfile
-- VS Code Copilot Agent and configured Atlassian/GitHub MCP integrations for workflows that need Jira or repository data
+The goal is to reduce manual effort in test-case creation, test execution, failure investigation, and test maintenance.
 
-The local mock test workflow does not require Jira credentials or real EventHub credentials.
+## Key Features
 
-## Install
+- **Jira Requirement Analysis:** Retrieves Jira issue requirements using the Jira REST API.
+- **AI-Powered Test Generation:** Uses Google Gemini AI to analyze requirements and generate structured test scenarios.
+- **Playwright Automation:** Generates and executes JavaScript-based Playwright test cases.
+- **Acceptance Criteria Mapping:** Connects generated test cases with individual Jira acceptance criteria.
+- **Mock EventHub Application:** Provides an isolated application for safely testing login, event selection, and ticket booking.
+- **Automated Test Reporting:** Generates structured JSON reports containing execution status, passed tests, failed tests, and acceptance-criteria results.
+- **AI-Assisted Failure Analysis:** Analyzes test failures and provides repair suggestions, with deterministic fallback when AI analysis is unavailable.
+- **Human-Approved Self-Healing:** Generates controlled repair proposals and validates changes before applying them with explicit human approval.
+- **Dashboard:** Displays Jira requirements, test scenarios, execution results, failure analysis, and repair status.
+- **GitHub Workflow:** Prepares pull request content for code review.
 
-From the repository root:
+## Technologies Used
 
-```bash
-npm ci
-```
+| Category | Technology |
+|---|---|
+| Programming Language | JavaScript |
+| Backend | Node.js, Express.js |
+| Test Automation | Playwright |
+| AI Integration | Google Gemini API |
+| Requirement Management | Jira REST API |
+| Version Control | Git, GitHub |
+| Frontend | HTML, CSS, JavaScript |
+| Reporting | JSON |
+| Testing Environment | Local Mock EventHub Application |
 
-## Run the local mock tests
 
-Run the APJTPAA-1 generated Playwright tests against the local mock:
+## MCP Server Integration
 
-```bash
-npm run test:apjtpaa-1
-```
+JiraPilot AI uses Model Context Protocol (MCP) integrations in its AI-assisted development and agent environment to connect AI agents with external tools and services.
 
-The runner starts Playwright with `playwright.config.js`. That configuration starts the mock server at `http://127.0.0.1:4173`, uses one worker, and runs `tests/generated/APJTPAA-1.spec.js`. The mock accepts only loopback requests, and the generated tests block requests outside the mock origin.
+MCP provides a standardized way for AI agents to access external capabilities through dedicated MCP servers.
 
-The mock uses dummy credentials only:
+### MCP Servers Used
 
-```text
-Email:    qa@example.test
-Password: LocalMockOnly-123!
-```
+| MCP Server | Purpose |
+|---|---|
+| Atlassian MCP Server | Connects agents with Jira to retrieve issue details and requirements. |
+| GitHub MCP Server | Provides access to GitHub repository and pull-request workflows. |
+| Playwright MCP Server | Provides browser interaction and automation tools for testing workflows. |
 
-These are for the isolated local mock and are not real EventHub credentials.
+### How MCP Supports the Workflow
 
-To explicitly run using the mock-specific script:
+- **Atlassian MCP:** Helps agents access Jira issue information and acceptance criteria.
+- **GitHub MCP:** Supports repository-related operations and pull-request workflows.
+- **Playwright MCP:** Provides browser automation capabilities to interact with web applications.
 
-```bash
-npm run test:apjtpaa-1:mock
-```
+These MCP integrations extend the capabilities of the AI-assisted agent environment by connecting it with external development and testing tools.
 
-The command configured to enable the controlled mock failure is:
+**Note:** MCP server integrations are part of the agent/tooling environment. The submitted application's local test execution is handled by its Node.js Playwright runner; the application backend should not be described as hosting these MCP servers.
 
-```bash
-npm run test:apjtpaa-1:mock:failure
-```
-
-Use the failure-injection command only when deliberately demonstrating failure handling. It changes mock event wording; whether it produces a failure depends on the current generated test parser. No repair is applied automatically.
-
-## Results and HTML report
-
-Structured result JSON files and related analysis artifacts are written under:
-
-```text
-generated/results/
-```
-
-The local mock HTML report is written under:
+## Project Workflow
 
 ```text
-playwright-report/APJTPAA-1/
+        Jira Requirement
+               |
+               v
+      Requirement Analysis
+               |
+               v
+       Gemini AI Analysis
+               |
+               v
+      Test Case Generation
+               |
+               v
+       Playwright Execution
+               |
+               v
+        Test Result Report
+               |
+               v
+         Failure Analysis
+               |
+               v
+       Repair Proposal
+               |
+               v
+       Human Approval
+               |
+               v
+       Validated Test Repair
+               |
+               v
+       Dashboard & GitHub
 ```
 
-Open the report's `index.html` in a browser after a run. Playwright test output is written under `test-results/APJTPAA-1/`.
+## Main Project Implementation
 
-## Dashboard
+### 1. Jira Integration
 
-Start the local dashboard:
+- Connects with Jira through the Jira REST API.
+- Retrieves issue details using a Jira issue key.
+- Uses acceptance criteria as input for test scenario generation.
+
+**Example Jira Issue:** `APJTPAA-1`
+
+### 2. AI-Based Test Case Generation
+
+- Integrates Google Gemini AI.
+- Analyzes Jira requirements and acceptance criteria.
+- Generates structured Playwright test scenarios.
+- Maps scenarios to acceptance criteria.
+
+### 3. Playwright Test Automation
+
+Implemented seven acceptance-criteria-based test cases:
+
+| Test ID | Test Scenario |
+|---|---|
+| AC-01 | Open the EventHub application |
+| AC-02 | Log in with configured test credentials |
+| AC-03 | Select the evidenced EventHub event |
+| AC-04 | Record available seats before booking |
+| AC-05 | Book exactly one ticket |
+| AC-06 | Verify booking confirmation |
+| AC-07 | Verify exactly one seat is deducted |
+
+### 4. Mock EventHub Application
+
+Developed an isolated local mock application to simulate the ticket-booking workflow.
+
+It supports:
+- User login simulation.
+- Event selection.
+- Available seat count verification.
+- Single-ticket booking.
+- Booking confirmation.
+- Controlled failure simulation.
+
+The mock environment allows automated tests to run without creating real EventHub bookings.
+
+### 5. Failure Analysis and Self-Healing
+
+Implemented a controlled failure-analysis and repair workflow.
+
+- Identifies failed test cases.
+- Analyzes failure information using AI-assisted analysis with deterministic fallback.
+- Generates repair proposals.
+- Validates proposed source-code changes.
+- Checks source hashes and candidate syntax.
+- Creates backups before applying approved repairs.
+- Requires explicit human approval before modifying the generated test.
+
+The supported repair is intentionally restricted to a specific seat-count parser correction. It does not automatically weaken test assertions.
+
+### 6. Dashboard and Reporting
+
+The Express.js dashboard displays:
+- Jira issue information.
+- Generated test scenarios.
+- Acceptance criteria coverage.
+- Test execution results.
+- Failure analysis.
+- Repair proposal and approval status.
+
+Structured JSON reports are generated to maintain execution history.
+
+## Testing Results
+
+The project was tested against the local mock EventHub application.
+
+**Final verified execution:**
+
+| Metric | Result |
+|---|---:|
+| Total tests | 7 |
+| Passed | 7 |
+| Failed | 0 |
+| Skipped | 0 |
+| Environment | Local Mock EventHub |
+
+The controlled failure workflow was also demonstrated, including repair proposal generation, human approval, and successful re-execution of the supported tests.
+
+## Installation and Setup
+
+### Prerequisites
+
+- Node.js and npm.
+- Git.
+- A Jira account and API access for Jira integration.
+- A Google Gemini API key for AI-powered analysis and generation.
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/saloni-wadhawal/JiraPilot-AI.git
+```
+
+### 2. Navigate to the Project
+
+```bash
+cd JiraPilot-AI
+```
+
+### 3. Install Dependencies
+
+```bash
+npm install
+```
+
+### 4. Configure Environment Variables
+
+Create a local `.env` file and configure the required Jira and Gemini credentials according to the application's configuration.
+
+**Important:** Never commit `.env` files, API keys, passwords, or other secrets to GitHub.
+
+### 5. Start the Application
 
 ```bash
 npm start
 ```
 
-By default, open [http://localhost:3000](http://localhost:3000). Set the `PORT` environment variable to use a different port. Dashboard AI proposal features may use Gemini when configured; do not put credentials in source code or commit environment files.
+Open the dashboard at:
 
-## Failure analysis and repair safeguards
+```text
+http://localhost:3000
+```
+
+## Running Automated Tests
+
+### Run the Local Mock Test Suite
+
+```bash
+npm run test:apjtpaa-1
+```
+
+### Run the Controlled Failure Scenario
+
+```bash
+npm run test:apjtpaa-1:mock:failure
+```
+
+This command intentionally simulates a failure in the local mock environment for testing the failure-analysis workflow.
+
+### Live EventHub Testing
+
+The project has a separate live testing configuration:
+
+```bash
+npm run test:live:eventhub
+```
+
+**Warning:** This workflow can interact with the real EventHub application and create an actual booking. Use it only with explicit authorization and appropriate test credentials. The seven-test result reported above was obtained using the local mock application, not the live website.
+
+## Project Structure
+
+```text
+JiraPilot-AI/
+│
+├── .github/
+│   ├── agents/
+│   │   ├── jirapilot-orchestrator.agent.md
+│   │   ├── requirement-analyst.agent.md
+│   │   ├── test-case-generator.agent.md
+│   │   ├── test-execution.agent.md
+│   │   └── github-pr.agent.md
+│   └── copilot-instructions.md
+│
+├── generated/
+│   └── APJTPAA-1-test-plan.json
+│
+├── public/
+│   └── index.html
+│
+├── src/
+│   └── execution/
+│       ├── failure-analysis.js
+│       ├── json-reporter.js
+│       └── run-generated-tests.js
+│
+├── tests/
+│   ├── generated/
+│   │   └── APJTPAA-1.spec.js
+│   └── mock-eventhub/
+│       └── server.js
+│
+├── playwright.config.js
+├── playwright.live.config.js
+├── server.js
+├── package.json
+└── README.md
+```
+
+## Safety and Validation
+
+- Local mock testing is isolated from external websites.
+- Test repair requires human approval.
+- Original test files are backed up before approved repairs.
+- Source hashes and syntax validation help prevent unintended changes.
+- Sensitive credentials are maintained outside version control.
+- Live EventHub execution is separate from local mock testing.
+
+
+## Additional Implementation Details
+
+### Failure Analysis and Repair Safeguards
 
 The failure-analysis CLI supports:
 
@@ -96,33 +317,66 @@ node src/execution/failure-analysis.js propose generated/results/<result-file>.j
 node src/execution/failure-analysis.js apply generated/results/<result-file>.json --human-approved
 ```
 
-Failure analysis and repair proposals require an execution status of `failed` and at least one test with status `failed`. Timed-out, interrupted, and not-run tests are not eligible for repair.
+- Repair proposals are restricted to the local mock environment.
+- Failed execution results are required before a repair proposal can be generated.
+- Proposed changes are validated before application.
+- Applying a repair requires explicit human approval and confirmation of the proposal SHA-256 hash.
+- Backups and source validation help prevent unintended changes.
+- Only the supported seat-count parser correction is permitted; test assertions are not automatically weakened.
 
-Repair proposals are restricted to `local_mock`. Review the proposal before applying it. Application requires an interactive terminal and confirmation of the exact proposal SHA-256 hash. The validator permits only the approved `still open` alternative to be appended to the existing seat-count regex; any other source change is rejected. A shared exclusive lock prevents concurrent repairs to the generated test file. The workflow retains a backup and enforces one repair attempt per run.
+### Jira and GitHub Integrations
 
-When Gemini analysis is enabled, failure details and generated test source may be sent to Gemini. Set `JIRAPILOT_DISABLE_GEMINI_ANALYSIS=true` to keep failure analysis on the deterministic local fallback. Provider error details are omitted from workflow output.
+Jira retrieval and GitHub repository operations use configured VS Code Copilot Agent integrations and MCP servers.
 
-If a process exits unexpectedly while holding the repair lock, it may leave a lock file beside the generated test. Review that no repair is running and inspect the situation before removing a stale lock.
+- Atlassian MCP supports Jira issue and acceptance-criteria access.
+- GitHub MCP supports repository and pull-request workflows.
+- Review proposed repository changes and obtain approval before publishing a branch or pull request.
 
-## Jira and GitHub integrations
+### Real Website Validation – EventHub
 
-Jira retrieval and GitHub repository operations are performed by the configured VS Code Copilot Agent integrations, not by assuming the Express server can access MCP tools. Jira access should remain read-only. Review proposed repository changes and obtain explicit approval before publishing a branch or pull request. Never publish or merge automatically.
+One live test was successfully executed against the EventHub website.
 
-## Live EventHub tests
+| Validation | Result |
+|---|---|
+| Login | Passed |
+| Event selection | Passed |
+| Initial seat count | 1475 |
+| Ticket booking | Passed |
+| Booking confirmation | Passed |
+| Updated seat count | 1474 |
+| Seat decrement validation | Passed |
+| Total tests | 1 passed, 0 failed |
+| Execution time | 13.4 seconds |
 
-The separate live test target uses `playwright.live.config.js` and is not part of the local mock command. Live booking tests can affect real data. Do not run them without explicit approval for that specific run; prefer the local mock.
+**Important:** This test created one real EventHub booking. Do not repeat live execution without explicit approval. The seven-test result above refers to the separate local mock environment.
 
-## Project layout
+### Gemini Data Handling
 
-```text
-.github/agents/                 Copilot workflow profiles
-generated/                      Acceptance-criteria plan and workflow artifacts
-public/                         Dashboard frontend
-src/execution/                  Test runner, JSON reporter, and failure analysis
-tests/generated/                Jira-generated Playwright tests
-tests/mock-eventhub/            Loopback-only local EventHub mock
-tests/                           Other Playwright tests and approval setup
-playwright.config.js             Local mock Playwright configuration
-playwright.live.config.js        Separate live-test configuration
-server.js                        Express dashboard server
-```
+When Gemini analysis is enabled, failure details and generated test source may be sent to Gemini. Set `JIRAPILOT_DISABLE_GEMINI_ANALYSIS=true` to use deterministic local failure analysis instead.
+
+## Current Limitations
+
+- The seven-test regression suite was verified against the local mock application. One separate live EventHub booking test was also successfully verified.
+- Specialist agent profiles and an orchestrated workflow are implemented, but fully autonomous agent-to-agent delegation has not been verified.
+- Automated GitHub pull request publication is not enabled; pull request content is prepared for review and publication is handled separately.
+- The supported self-healing repair is intentionally limited to a specific test-code correction.
+
+## Future Improvements
+
+- Expand supported test-repair scenarios while maintaining human approval.
+- Verify agent-to-agent delegation and coordination.
+- Add automated CI/CD execution and reporting.
+- Expand test coverage for additional Jira requirements.
+- Validate the workflow against an authorized live test environment.
+
+## Author
+
+**Saloni Wadhawal**
+
+GitHub: https://github.com/saloni-wadhawal
+
+**Repository:** https://github.com/saloni-wadhawal/JiraPilot-AI
+
+---
+
+*JiraPilot AI demonstrates the practical integration of AI-assisted software testing, Jira requirement analysis, Playwright automation, failure analysis, and controlled self-healing into a unified QA workflow.*
