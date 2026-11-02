@@ -304,9 +304,59 @@ JiraPilot-AI/
 - Sensitive credentials are maintained outside version control.
 - Live EventHub execution is separate from local mock testing.
 
+
+## Additional Implementation Details
+
+### Failure Analysis and Repair Safeguards
+
+The failure-analysis CLI supports:
+
+```bash
+node src/execution/failure-analysis.js analyze generated/results/<result-file>.json
+node src/execution/failure-analysis.js propose generated/results/<result-file>.json
+node src/execution/failure-analysis.js apply generated/results/<result-file>.json --human-approved
+```
+
+- Repair proposals are restricted to the local mock environment.
+- Failed execution results are required before a repair proposal can be generated.
+- Proposed changes are validated before application.
+- Applying a repair requires explicit human approval and confirmation of the proposal SHA-256 hash.
+- Backups and source validation help prevent unintended changes.
+- Only the supported seat-count parser correction is permitted; test assertions are not automatically weakened.
+
+### Jira and GitHub Integrations
+
+Jira retrieval and GitHub repository operations use configured VS Code Copilot Agent integrations and MCP servers.
+
+- Atlassian MCP supports Jira issue and acceptance-criteria access.
+- GitHub MCP supports repository and pull-request workflows.
+- Review proposed repository changes and obtain approval before publishing a branch or pull request.
+
+### Real Website Validation – EventHub
+
+One live test was successfully executed against the EventHub website.
+
+| Validation | Result |
+|---|---|
+| Login | Passed |
+| Event selection | Passed |
+| Initial seat count | 1475 |
+| Ticket booking | Passed |
+| Booking confirmation | Passed |
+| Updated seat count | 1474 |
+| Seat decrement validation | Passed |
+| Total tests | 1 passed, 0 failed |
+| Execution time | 13.4 seconds |
+
+**Important:** This test created one real EventHub booking. Do not repeat live execution without explicit approval. The seven-test result above refers to the separate local mock environment.
+
+### Gemini Data Handling
+
+When Gemini analysis is enabled, failure details and generated test source may be sent to Gemini. Set `JIRAPILOT_DISABLE_GEMINI_ANALYSIS=true` to use deterministic local failure analysis instead.
+
 ## Current Limitations
 
-- The final seven-test verification was performed against the local mock application. Live EventHub execution has not been verified.
+- The seven-test regression suite was verified against the local mock application. One separate live EventHub booking test was also successfully verified.
 - Specialist agent profiles and an orchestrated workflow are implemented, but fully autonomous agent-to-agent delegation has not been verified.
 - Automated GitHub pull request publication is not enabled; pull request content is prepared for review and publication is handled separately.
 - The supported self-healing repair is intentionally limited to a specific test-code correction.
